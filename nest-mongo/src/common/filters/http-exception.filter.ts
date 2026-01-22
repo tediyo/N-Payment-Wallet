@@ -11,6 +11,7 @@ type ErrorResponse = {
   statusCode: number;
   message: string;
   errors?: string[];
+  details?: unknown;
   path: string;
   timestamp: string;
 };
@@ -25,6 +26,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
     let errors: string[] | undefined;
+    let details: unknown;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -43,6 +45,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         if (Array.isArray(responsePayload.errors)) {
           errors = responsePayload.errors.map(String);
         }
+        if (responsePayload.details !== undefined) {
+          details = responsePayload.details;
+        }
       }
     } else {
       // eslint-disable-next-line no-console
@@ -55,6 +60,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       path: request.url,
       timestamp: new Date().toISOString(),
       ...(errors ? { errors } : {}),
+      ...(details !== undefined ? { details } : {}),
     };
 
     response.status(status).json(body);
