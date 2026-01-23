@@ -1,9 +1,22 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
+import { Request } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AnalyticsFilterDto } from './dto/analytics-filter.dto';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
+import { InitializeStripePaymentDto } from './dto/initialize-stripe-payment.dto';
 import { PaymentHistoryFilterDto } from './dto/payment-history-filter.dto';
 import { PaymentService } from './payment.service';
 
@@ -99,5 +112,30 @@ export class PaymentController {
   @UseGuards(JwtAuthGuard)
   getDashboard(@CurrentUser() user: AuthUser) {
     return this.paymentService.getDashboardStats(user.userId);
+  }
+
+  @Post('stripe/initialize')
+  @UseGuards(JwtAuthGuard)
+  initializeStripe(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: InitializeStripePaymentDto,
+  ) {
+    return this.paymentService.initializeStripePayment(user.userId, dto);
+  }
+
+  @Post('stripe/verify')
+  @UseGuards(JwtAuthGuard)
+  verifyStripe(@Body() body: { sessionId: string }) {
+    return this.paymentService.verifyStripePayment(body.sessionId);
+  }
+
+  @Post('stripe/webhook')
+  async stripeWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('stripe-signature') signature: string,
+  ) {
+    // Public endpoint for Stripe webhook callbacks
+    const payload = req.rawBody || req.body;
+    return this.paymentService.handleStripeWebhook(payload, signature);
   }
 }

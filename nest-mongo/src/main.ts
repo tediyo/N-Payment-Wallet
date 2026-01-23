@@ -4,7 +4,9 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true, // Enable raw body for Stripe webhooks
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
