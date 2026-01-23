@@ -10,6 +10,7 @@ import {
   PaymentTransaction,
   PaymentTransactionSchema,
 } from './schemas/payment-transaction.schema';
+import { StripeService } from './stripe.service';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import {
     WalletModule,
   ],
   controllers: [PaymentController],
-  providers: [PaymentService, EmailService],
+  providers: [PaymentService, EmailService, StripeService],
   exports: [PaymentService],
 })
 export class PaymentModule {}

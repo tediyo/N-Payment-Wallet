@@ -7,6 +7,8 @@ export type PaymentTransactionStatus =
   | 'failed'
   | 'cancelled';
 
+export type PaymentProvider = 'chapa' | 'stripe';
+
 export type PaymentTransactionDocument = HydratedDocument<PaymentTransaction>;
 
 @Schema({ timestamps: true })
@@ -30,11 +32,24 @@ export class PaymentTransaction {
   })
   status: PaymentTransactionStatus;
 
+  @Prop({
+    required: true,
+    enum: ['chapa', 'stripe'],
+    default: 'chapa',
+  })
+  provider: PaymentProvider;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   walletTransactionId?: Types.ObjectId;
 
   @Prop({ type: Object })
   chapaResponse?: any;
+
+  @Prop({ type: Object })
+  stripeResponse?: any;
+
+  @Prop()
+  stripeSessionId?: string;
 
   createdAt?: Date;
   updatedAt?: Date;

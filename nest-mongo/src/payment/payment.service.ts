@@ -10,6 +10,8 @@ import { User, UserDocument } from '../auth/schemas/user.schema';
 import { WalletService } from '../wallet/wallet.service';
 import { EmailService } from './email.service';
 import { InitializePaymentDto } from './dto/initialize-payment.dto';
+import { InitializeStripePaymentDto } from './dto/initialize-stripe-payment.dto';
+import { StripeService } from './stripe.service';
 import {
   PaymentTransaction,
   PaymentTransactionDocument,
@@ -19,6 +21,7 @@ import {
 export class PaymentService {
   constructor(
     private readonly chapaService: ChapaService,
+    private readonly stripeService: StripeService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(PaymentTransaction.name)
     private readonly paymentTransactionModel: Model<PaymentTransactionDocument>,
@@ -646,5 +649,214 @@ export class PaymentService {
       allTime: allTimeStats.summary,
       recentTransactions: allTimeStats.recentTransactions,
     };
+  }
+
+  async initializeStripePayment(userId: string, dto: InitializeStripePaymentDto) {
+    // Get user details
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!user.email || !emailRegex.test(user.email)) {
+      throw new BadRequestException(
+        `Invalid email format for user: ${user.email}. Please update your email address.`,
+      );
+    }
+
+    // Generate transaction reference
+    const tx_ref = `STRIPE-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+    // Create payment transaction record
+    const paymentTransaction = await this.paymentTransactionModel.create({
+      tx_ref,
+      userId: new Types.ObjectId(userId),
+      amount: dto.amount,
+      currency: dto.currency.toUpperCase(),
+      status: 'pending',
+      provider: 'stripe',
+    });
+
+    try {
+      // Create Stripe checkout session
+      const stripeSession = await this.stripeService.createCheckoutSession(
+        dto.amount,
+        dto.currency,
+        userId,
+        tx_ref,
+        user.email,
+      );
+
+      // Update payment transaction with Stripe response
+      paymentTransaction.stripeResponse = stripeSession;
+      paymentTransaction.stripeSessionId = stripeSession.sessionId;
+      await paymentTransaction.save();
+
+      return {
+        ...stripeSession,
+        paymentTransactionId: paymentTransaction._id,
+        tx_ref: paymentTransaction.tx_ref,
+      };
+    } catch (error: any) {
+      // Update status to failed
+      paymentTransaction.status = 'failed';
+      paymentTransaction.stripeResponse = {
+        error: error?.message || 'Unknown error',
+      };
+      await paymentTransaction.save();
+
+      console.error('Stripe Payment Error:', {
+        message: error?.message,
+        fullError: error,
+      });
+
+      throw new BadRequestException(
+        `Stripe payment initialization failed: ${error?.message || 'Unknown error'}`,
+      );
+    }
+  }
+
+  async verifyStripePayment(sessionId: string) {
+    // Find payment transaction by Stripe session ID
+    const paymentTransaction =
+      await this.paymentTransactionModel
+        .findOne({ stripeSessionId: sessionId })
+        .exec();
+
+    if (!paymentTransaction) {
+      throw new NotFoundException('Payment transaction not found');
+    }
+
+    // If already verified and successful, return existing data
+    if (paymentTransaction.status === 'success') {
+      return {
+        message: 'Payment already verified',
+        status: 'success',
+        data: paymentTransaction,
+      };
+    }
+
+    try {
+      // Verify with Stripe
+      const stripeResponse = await this.stripeService.verifyPayment(sessionId);
+
+      // Update payment transaction
+      paymentTransaction.status = stripeResponse.success ? 'success' : 'failed';
+      paymentTransaction.stripeResponse = stripeResponse;
+      await paymentTransaction.save();
+
+      // If payment successful, recharge wallet
+      if (paymentTransaction.status === 'success') {
+        await this.walletService.recharge(
+          paymentTransaction.userId.toString(),
+          { amount: paymentTransaction.amount },
+        );
+        await paymentTransaction.save();
+
+        // Send success email notification
+        try {
+          const user = await this.userModel
+            .findById(paymentTransaction.userId)
+            .exec();
+          if (user) {
+            await this.emailService.sendPaymentSuccessEmail(
+              user,
+              paymentTransaction.amount,
+              paymentTransaction.currency,
+              paymentTransaction.tx_ref,
+            );
+          }
+        } catch (emailError: any) {
+          console.error('Failed to send payment success email:', emailError);
+        }
+      }
+
+      return {
+        message: 'Payment verified successfully',
+        status: paymentTransaction.status,
+        data: {
+          paymentTransaction,
+          stripeResponse,
+        },
+      };
+    } catch (error: any) {
+      paymentTransaction.status = 'failed';
+      paymentTransaction.stripeResponse = { error: error.message };
+      await paymentTransaction.save();
+
+      throw new BadRequestException(
+        `Stripe payment verification failed: ${error.message}`,
+      );
+    }
+  }
+
+  async handleStripeWebhook(payload: any, signature: string) {
+    try {
+      const webhookData = await this.stripeService.handleWebhook(
+        payload,
+        signature,
+      );
+
+      // Check if webhook data has the expected structure
+      if (
+        webhookData &&
+        typeof webhookData === 'object' &&
+        'type' in webhookData &&
+        webhookData.type === 'checkout.session.completed'
+      ) {
+        const sessionId = (webhookData as any).sessionId;
+        const paymentStatus = (webhookData as any).paymentStatus;
+
+        if (!sessionId) {
+          return { received: false, error: 'Missing sessionId in webhook data' };
+        }
+
+        // Find payment transaction by session ID
+        const paymentTransaction =
+          await this.paymentTransactionModel
+            .findOne({ stripeSessionId: sessionId })
+            .exec();
+
+        if (paymentTransaction && paymentTransaction.status === 'pending') {
+          // Update status
+          paymentTransaction.status =
+            paymentStatus === 'paid' ? 'success' : 'failed';
+          paymentTransaction.stripeResponse = webhookData;
+          await paymentTransaction.save();
+
+          // If successful, recharge wallet
+          if (paymentTransaction.status === 'success') {
+            try {
+              await this.walletService.recharge(
+                paymentTransaction.userId.toString(),
+                { amount: paymentTransaction.amount },
+              );
+
+              // Send email notification
+              const user = await this.userModel
+                .findById(paymentTransaction.userId)
+                .exec();
+              if (user) {
+                await this.emailService.sendPaymentSuccessEmail(
+                  user,
+                  paymentTransaction.amount,
+                  paymentTransaction.currency,
+                  paymentTransaction.tx_ref,
+                );
+              }
+            } catch (error: any) {
+              console.error('Failed to process successful payment:', error);
+            }
+          }
+        }
+      }
+
+      return { received: true, data: webhookData };
+    } catch (error: any) {
+      console.error('Stripe webhook error:', error);
+      return { received: false, error: error.message };
+    }
   }
 }
