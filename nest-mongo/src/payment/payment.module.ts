@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { User, UserSchema } from '../auth/schemas/user.schema';
 import { WalletModule } from '../wallet/wallet.module';
+import { EmailService } from './email.service';
 import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
 import {
@@ -20,7 +21,7 @@ import {
     WalletModule,
   ],
   controllers: [PaymentController],
-  providers: [PaymentService],
+  providers: [PaymentService, EmailService],
   exports: [PaymentService],
 })
 export class PaymentModule {}

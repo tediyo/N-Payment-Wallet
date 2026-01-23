@@ -35,6 +35,9 @@ export class PaymentTransaction {
 
   @Prop({ type: Object })
   chapaResponse?: any;
+
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export const PaymentTransactionSchema =
