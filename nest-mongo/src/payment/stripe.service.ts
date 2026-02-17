@@ -12,7 +12,7 @@ export class StripeService {
     if (secretKey) {
       try {
         this.stripe = new Stripe(secretKey, {
-          apiVersion: '2024-11-20.acacia',
+          apiVersion: '2026-01-28.clover',
         });
         this.logger.log('Stripe initialized successfully');
       } catch (error) {
