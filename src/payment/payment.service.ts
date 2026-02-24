@@ -27,7 +27,7 @@ export class PaymentService {
     private readonly paymentTransactionModel: Model<PaymentTransactionDocument>,
     private readonly walletService: WalletService,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   async initializeMobilePayment(userId: string, dto: InitializePaymentDto) {
     // Get user details
@@ -64,8 +64,7 @@ export class PaymentService {
     });
 
     try {
-      // Initialize Chapa mobile payment
-      const response = await this.chapaService.mobileInitialize({
+      console.log('Initializing Chapa Mobile Payment with:', {
         first_name: firstName,
         last_name: lastName,
         email: user.email.trim().toLowerCase(),
@@ -74,11 +73,29 @@ export class PaymentService {
         tx_ref: tx_ref,
         callback_url: dto.callback_url,
         return_url: dto.return_url,
+      });
+
+      // Initialize Chapa payment (using standard initialize as mobile-initialize is currently rejecting POST)
+      const chapaReturnUrl = dto.return_url
+        ? `${dto.return_url}${dto.return_url.includes('?') ? '&' : '?'}tx_ref=${tx_ref}`
+        : undefined;
+
+      const response = await this.chapaService.initialize({
+        first_name: firstName,
+        last_name: lastName,
+        email: user.email.trim().toLowerCase(),
+        currency: dto.currency,
+        amount: dto.amount.toString(),
+        tx_ref: tx_ref,
+        callback_url: dto.callback_url,
+        return_url: chapaReturnUrl,
         customization: {
           title: 'Wallet Recharge',
           description: `Recharge wallet with ${dto.amount} ${dto.currency}`,
         },
       });
+
+      console.log('Chapa Mobile Response:', JSON.stringify(response, null, 2));
 
       // Update payment transaction with Chapa response
       paymentTransaction.chapaResponse = response;
@@ -87,6 +104,7 @@ export class PaymentService {
       return {
         ...response,
         paymentTransactionId: paymentTransaction._id,
+        tx_ref,
       };
     } catch (error: any) {
       // Update status to failed
@@ -100,12 +118,12 @@ export class PaymentService {
       await paymentTransaction.save();
 
       // Log full error for debugging
-      console.error('Chapa Mobile Payment Error:', {
+      console.error('Chapa Mobile Payment Error:', JSON.stringify({
         message: error?.message,
-        response: error?.response,
+        status: error?.response?.status,
         data: error?.response?.data,
         fullError: error,
-      });
+      }, null, 2));
 
       const details =
         error?.response?.data ??
@@ -161,6 +179,10 @@ export class PaymentService {
 
     try {
       // Initialize Chapa payment
+      const chapaReturnUrl = dto.return_url
+        ? `${dto.return_url}${dto.return_url.includes('?') ? '&' : '?'}tx_ref=${tx_ref}`
+        : undefined;
+
       const response = await this.chapaService.initialize({
         first_name: firstName,
         last_name: lastName,
@@ -169,7 +191,7 @@ export class PaymentService {
         amount: dto.amount.toString(),
         tx_ref: tx_ref,
         callback_url: dto.callback_url,
-        return_url: dto.return_url,
+        return_url: chapaReturnUrl,
         customization: {
           title: 'Wallet Recharge',
           description: `Recharge wallet with ${dto.amount} ${dto.currency}`,
@@ -183,6 +205,7 @@ export class PaymentService {
       return {
         ...response,
         paymentTransactionId: paymentTransaction._id,
+        tx_ref,
       };
     } catch (error: any) {
       // Update status to failed
@@ -242,10 +265,11 @@ export class PaymentService {
     try {
       // Verify with Chapa
       const response = await this.chapaService.verify({ tx_ref });
+      console.log(`[Verification] Chapa Response for ${tx_ref}:`, JSON.stringify(response, null, 2));
 
       // Update payment transaction
       paymentTransaction.status =
-        response.data.status === 'successful' ? 'success' : 'failed';
+        (response.data.status === 'successful' || response.data.status === 'success') ? 'success' : 'failed';
       paymentTransaction.chapaResponse = response;
       await paymentTransaction.save();
 
@@ -335,10 +359,10 @@ export class PaymentService {
       currency: paymentTransaction.currency,
       user: user
         ? {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-          }
+          id: user.id,
+          name: user.name,
+          email: user.email,
+        }
         : null,
       chapaResponse: paymentTransaction.chapaResponse,
       createdAt: paymentTransaction.createdAt,
@@ -375,11 +399,12 @@ export class PaymentService {
       // Verify with Chapa
       console.log(`[Webhook] Verifying payment with Chapa: ${tx_ref}`);
       const response = await this.chapaService.verify({ tx_ref });
+      console.log(`[Webhook] Chapa Response for ${tx_ref}:`, JSON.stringify(response, null, 2));
 
       // Update payment transaction
       const previousStatus = paymentTransaction.status;
       paymentTransaction.status =
-        response.data.status === 'successful' ? 'success' : 'failed';
+        (response.data.status === 'successful' || response.data.status === 'success') ? 'success' : 'failed';
       paymentTransaction.chapaResponse = response;
       await paymentTransaction.save();
 

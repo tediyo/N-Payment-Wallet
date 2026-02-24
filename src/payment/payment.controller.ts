@@ -142,7 +142,14 @@ export class PaymentController {
   }
 
   @Get('success')
-  paymentSuccess(@Res() res: Response) {
+  paymentSuccess(@Query('tx_ref') tx_ref: string, @Res() res: Response) {
+    // Proactively verify the payment when the success page is hit
+    if (tx_ref) {
+      this.paymentService.verifyPayment(tx_ref).catch(err =>
+        console.error(`[Success Page] Auto-verification failed for ${tx_ref}:`, err.message)
+      );
+    }
+
     res.setHeader('Content-Type', 'text/html');
     res.send(`
       <!DOCTYPE html>
@@ -156,13 +163,16 @@ export class PaymentController {
             .icon { font-size: 64px; margin-bottom: 16px; }
             h1 { color: #16a34a; margin-bottom: 8px; }
             p { color: #666; font-size: 16px; }
+            .ref { font-family: monospace; background: #eee; padding: 4px 8px; border-radius: 4px; font-size: 14px; margin-top: 10px; display: inline-block; }
           </style>
         </head>
         <body>
           <div class="card">
             <div class="icon">✅</div>
             <h1>Payment Successful!</h1>
-            <p>Your wallet will be credited shortly.<br>You can close this window and return to the app.</p>
+            <p>Your wallet will be credited shortly.</p>
+            ${tx_ref ? `<div class="ref">Ref: ${tx_ref}</div>` : ''}
+            <p>You can close this window and return to the app.</p>
           </div>
         </body>
       </html>

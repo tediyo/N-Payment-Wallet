@@ -20,7 +20,7 @@ export class WalletService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(WalletTransaction.name)
     private readonly transactionModel: Model<WalletTransactionDocument>,
-  ) {}
+  ) { }
 
   async getWallet(userId: string) {
     const user = await this.userModel.findById(userId).exec();
@@ -36,6 +36,7 @@ export class WalletService {
   }
 
   async recharge(userId: string, dto: RechargeDto) {
+    console.log(`[Wallet] Attempting recharge for user ${userId}, amount: ${dto.amount}`);
     let updatedUser: UserDocument | null = null;
     let session: any = null;
 
@@ -107,7 +108,7 @@ export class WalletService {
     // Convert both to strings for comparison (handles ObjectId vs string)
     const senderId = String(userId);
     const receiverId = String(dto.toUserId);
-    
+
     if (senderId === receiverId) {
       throw new BadRequestException('Cannot transfer to yourself');
     }
