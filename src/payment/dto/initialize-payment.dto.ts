@@ -1,8 +1,9 @@
-import { IsNotEmpty, IsNumber, IsString, Min } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsString, Max, Min } from 'class-validator';
 
 export class InitializePaymentDto {
   @IsNumber()
   @Min(1)
+  @Max(999999)
   amount: number;
 
   @IsString()

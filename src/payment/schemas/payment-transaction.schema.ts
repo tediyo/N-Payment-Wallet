@@ -19,7 +19,7 @@ export class PaymentTransaction {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
-  @Prop({ required: true, min: 1 })
+  @Prop({ required: true, min: 1, max: 1000000 })
   amount: number;
 
   @Prop({ required: true, default: 'ETB' })

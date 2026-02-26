@@ -706,12 +706,22 @@ export class PaymentService {
 
     try {
       // Create Stripe checkout session
+      const successUrl = dto.return_url ?
+        (dto.return_url.includes('session_id') ? dto.return_url : `${dto.return_url}${dto.return_url.includes('?') ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`)
+        : undefined;
+
+      const cancelUrl = dto.return_url ?
+        dto.return_url.replace('/success', '/cancel').split('?')[0]
+        : undefined;
+
       const stripeSession = await this.stripeService.createCheckoutSession(
         dto.amount,
         dto.currency,
         userId,
         tx_ref,
         user.email,
+        successUrl,
+        cancelUrl,
       );
 
       // Update payment transaction with Stripe response
@@ -765,10 +775,19 @@ export class PaymentService {
 
     try {
       // Verify with Stripe
-      const stripeResponse = await this.stripeService.verifyPayment(sessionId);
+      let stripeResponse = await this.stripeService.verifyPayment(sessionId);
+
+      // If not paid yet, wait a bit and retry once (Stripe can be slow to update session status)
+      if (stripeResponse.paymentStatus !== 'paid') {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        stripeResponse = await this.stripeService.verifyPayment(sessionId);
+      }
 
       // Update payment transaction
-      paymentTransaction.status = stripeResponse.success ? 'success' : 'failed';
+      if (stripeResponse.success) {
+        paymentTransaction.status = 'success';
+      }
+
       paymentTransaction.stripeResponse = stripeResponse;
       await paymentTransaction.save();
 

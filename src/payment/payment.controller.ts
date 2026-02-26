@@ -142,11 +142,19 @@ export class PaymentController {
   }
 
   @Get('success')
-  paymentSuccess(@Query('tx_ref') tx_ref: string, @Res() res: Response) {
+  paymentSuccess(
+    @Query('tx_ref') tx_ref: string,
+    @Query('session_id') session_id: string,
+    @Res() res: Response
+  ) {
     // Proactively verify the payment when the success page is hit
     if (tx_ref) {
       this.paymentService.verifyPayment(tx_ref).catch(err =>
         console.error(`[Success Page] Auto-verification failed for ${tx_ref}:`, err.message)
+      );
+    } else if (session_id) {
+      this.paymentService.verifyStripePayment(session_id).catch(err =>
+        console.error(`[Success Page] Stripe auto-verification failed for ${session_id}:`, err.message)
       );
     }
 
@@ -172,7 +180,8 @@ export class PaymentController {
             <h1>Payment Successful!</h1>
             <p>Your wallet will be credited shortly.</p>
             ${tx_ref ? `<div class="ref">Ref: ${tx_ref}</div>` : ''}
-            <p>You can close this window and return to the app.</p>
+            <p>You can close this window or click the button below to return to the app.</p>
+            <a href="exp://" style="display: block; margin-top: 20px; padding: 12px 24px; background: #007AFF; color: white; border-radius: 8px; text-decoration: none; font-weight: 600;">Back to App</a>
           </div>
         </body>
       </html>
