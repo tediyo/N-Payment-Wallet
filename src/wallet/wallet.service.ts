@@ -324,15 +324,48 @@ export class WalletService {
   }
 
   async listTransactions(userId: string) {
-    return this.transactionModel
+    const transactions = await this.transactionModel
       .find({
         $or: [
           { fromUser: new Types.ObjectId(userId) },
           { toUser: new Types.ObjectId(userId) },
         ],
       })
+      .populate('fromUser', 'name email')
+      .populate('toUser', 'name email')
       .sort({ createdAt: -1 })
       .exec();
+
+    return transactions.map((tx) => {
+      const transaction = tx.toObject();
+      let direction: 'IN' | 'OUT' = 'OUT';
+      let description = transaction.type.toUpperCase();
+
+      if (transaction.type === 'recharge') {
+        direction = 'IN';
+        description = 'Wallet Recharge';
+      } else if (transaction.type === 'bill') {
+        direction = 'OUT';
+        description = `Bill Payment: ${transaction.biller || 'Unknown'}`;
+      } else if (transaction.type === 'transfer') {
+        const isReceiver = String(transaction.toUser?._id) === String(userId);
+        direction = isReceiver ? 'IN' : 'OUT';
+
+        if (isReceiver) {
+          const senderName = (transaction.fromUser as any)?.name || 'Someone';
+          description = `Received from ${senderName}`;
+        } else {
+          const receiverName = (transaction.toUser as any)?.name || 'Someone';
+          description = `Sent to ${receiverName}`;
+        }
+      }
+
+      return {
+        ...transaction,
+        direction,
+        description: transaction.note || description,
+      };
+    });
   }
 
   // QR Implementation
