@@ -13,13 +13,19 @@ import {
   WalletTransaction,
   WalletTransactionDocument,
 } from './wallet.schema';
+import { SecurityService } from '../security/security.service';
+import { NotificationService } from '../notifications/notification.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class WalletService {
+  private readonly QR_SECRET = process.env.QR_SECRET || 'super-secret-qr-key';
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(WalletTransaction.name)
     private readonly transactionModel: Model<WalletTransactionDocument>,
+    private readonly securityService: SecurityService,
+    private readonly notificationService: NotificationService,
   ) { }
 
   async getWallet(userId: string) {
@@ -101,17 +107,53 @@ export class WalletService {
       }
     }
 
+    // Trigger Notification
+    await this.notificationService.create(
+      userId,
+      'Wallet Recharge',
+      `Your wallet has been recharged with ${dto.amount} ETB.`,
+    );
+
     return { balance: updatedUser!.balance };
   }
 
   async transfer(userId: string, dto: TransferDto) {
-    // Convert both to strings for comparison (handles ObjectId vs string)
-    const senderId = String(userId);
-    const receiverId = String(dto.toUserId);
+    // 1. Verify PIN
+    await this.securityService.verifyWalletPin(userId, dto.pin);
 
-    if (senderId === receiverId) {
+    // 2. Resolve Receiver
+    let receiverId = dto.toUserId;
+    if (!receiverId && dto.phoneNumber) {
+      const receiverUser = await this.userModel
+        .findOne({ phoneNumber: dto.phoneNumber })
+        .exec();
+      if (!receiverUser) {
+        throw new NotFoundException('Receiver with this phone number not found');
+      }
+      receiverId = receiverUser.id;
+    }
+
+    if (!receiverId) {
+      throw new BadRequestException('Receiver ID or Phone Number is required');
+    }
+
+    const senderId = String(userId);
+    const targetId = String(receiverId);
+
+    if (senderId === targetId) {
       throw new BadRequestException('Cannot transfer to yourself');
     }
+
+    // 3. Idempotency Check
+    if (dto.idempotencyKey) {
+      const existingTx = await this.transactionModel
+        .findOne({ idempotencyKey: dto.idempotencyKey })
+        .exec();
+      if (existingTx) {
+        return { balance: (await this.userModel.findById(userId).exec())?.balance, message: 'Duplicate transaction' };
+      }
+    }
+
     let sender: UserDocument | null = null;
     let session: any = null;
 
@@ -122,12 +164,20 @@ export class WalletService {
         if (!sender) {
           throw new NotFoundException('Sender not found');
         }
+        if (sender.isFrozen) {
+          throw new BadRequestException('Wallet is frozen');
+        }
         if (sender.balance < dto.amount) {
           throw new BadRequestException('Insufficient balance');
         }
 
+        // Check daily limit
+        if (sender.spentToday + dto.amount > sender.dailyLimit) {
+          throw new BadRequestException('Daily limit exceeded');
+        }
+
         const receiver = await this.userModel
-          .findById(dto.toUserId)
+          .findById(targetId)
           .session(session)
           .exec();
         if (!receiver) {
@@ -135,7 +185,9 @@ export class WalletService {
         }
 
         sender.balance -= dto.amount;
+        sender.spentToday += dto.amount;
         receiver.balance += dto.amount;
+
         await sender.save({ session });
         await receiver.save({ session });
 
@@ -143,35 +195,25 @@ export class WalletService {
           [
             {
               type: 'transfer',
+              status: 'SUCCESS',
               amount: dto.amount,
               fromUser: sender._id,
               toUser: receiver._id,
+              note: dto.note,
+              idempotencyKey: dto.idempotencyKey,
             },
           ],
           { session },
         );
       });
     } catch (error: any) {
-      // Fallback if transactions not supported (no replica set)
-      if (
-        error?.code === 20 ||
-        error?.codeName === 'IllegalOperation' ||
-        error?.message?.includes('replica set') ||
-        error?.errmsg?.includes('replica set') ||
-        error?.errorResponse?.errmsg?.includes('replica set')
-      ) {
+      // Fallback for simple MongoDB (no replica set)
+      if (error?.message?.includes('replica set')) {
         sender = await this.userModel.findById(userId).exec();
-        if (!sender) {
-          throw new NotFoundException('Sender not found');
-        }
-        if (sender.balance < dto.amount) {
-          throw new BadRequestException('Insufficient balance');
-        }
+        const receiver = await this.userModel.findById(targetId).exec();
 
-        const receiver = await this.userModel.findById(dto.toUserId).exec();
-        if (!receiver) {
-          throw new NotFoundException('Receiver not found');
-        }
+        if (!sender || !receiver) throw new NotFoundException('User not found');
+        if (sender.balance < dto.amount) throw new BadRequestException('Insufficient balance');
 
         sender.balance -= dto.amount;
         receiver.balance += dto.amount;
@@ -180,9 +222,12 @@ export class WalletService {
 
         await this.transactionModel.create({
           type: 'transfer',
+          status: 'SUCCESS',
           amount: dto.amount,
           fromUser: sender._id,
           toUser: receiver._id,
+          note: dto.note,
+          idempotencyKey: dto.idempotencyKey,
         });
       } else {
         throw error;
@@ -192,6 +237,18 @@ export class WalletService {
         await session.endSession();
       }
     }
+
+    // Trigger Notifications
+    await this.notificationService.create(
+      userId,
+      'Transfer Sent',
+      `You sent ${dto.amount} ETB to ${targetId}.`,
+    );
+    await this.notificationService.create(
+      targetId,
+      'Transfer Received',
+      `You received ${dto.amount} ETB from ${userId}.`,
+    );
 
     return { balance: sender!.balance };
   }
@@ -276,5 +333,40 @@ export class WalletService {
       })
       .sort({ createdAt: -1 })
       .exec();
+  }
+
+  // QR Implementation
+  async generateDynamicQr(userId: string, amount: number, note?: string) {
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const payload = JSON.stringify({ userId, amount, note, expiresAt });
+    const signature = crypto
+      .createHmac('sha256', this.QR_SECRET)
+      .update(payload)
+      .digest('hex');
+
+    return {
+      type: 'DYNAMIC',
+      payload: Buffer.from(payload).toString('base64'),
+      signature,
+    };
+  }
+
+  async validateQr(payloadBase64: string, signature: string) {
+    const payload = Buffer.from(payloadBase64, 'base64').toString();
+    const expectedSignature = crypto
+      .createHmac('sha256', this.QR_SECRET)
+      .update(payload)
+      .digest('hex');
+
+    if (signature !== expectedSignature) {
+      throw new BadRequestException('Invalid QR signature');
+    }
+
+    const data = JSON.parse(payload);
+    if (data.expiresAt && Date.now() > data.expiresAt) {
+      throw new BadRequestException('QR code expired');
+    }
+
+    return data;
   }
 }

@@ -6,9 +6,14 @@ import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 import { WalletTransaction, WalletTransactionSchema } from './wallet.schema';
 
+import { SecurityModule } from '../security/security.module';
+import { NotificationModule } from '../notifications/notification.module';
+
 @Module({
   imports: [
     AuthModule,
+    SecurityModule,
+    NotificationModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: WalletTransaction.name, schema: WalletTransactionSchema },
@@ -18,4 +23,4 @@ import { WalletTransaction, WalletTransactionSchema } from './wallet.schema';
   providers: [WalletService],
   exports: [WalletService],
 })
-export class WalletModule {}
+export class WalletModule { }

@@ -1,10 +1,28 @@
-import { IsMongoId, IsNumber, Min } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class TransferDto {
-  @IsMongoId()
-  toUserId: string;
+  @IsOptional()
+  @IsString()
+  toUserId?: string;
 
+  @IsOptional()
+  @IsString()
+  phoneNumber?: string;
+
+  @IsNotEmpty()
   @IsNumber()
   @Min(1)
   amount: number;
+
+  @IsNotEmpty()
+  @IsString()
+  pin: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

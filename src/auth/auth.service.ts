@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -15,7 +16,9 @@ type SafeUser = {
   id: string;
   name: string;
   email: string;
+  phoneNumber?: string;
   balance: number;
+  hasPinSet: boolean;
 };
 
 @Injectable()
@@ -23,7 +26,7 @@ export class AuthService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   async register(dto: RegisterDto) {
     const email = dto.email.trim().toLowerCase();
@@ -62,6 +65,22 @@ export class AuthService {
     return this.userModel.findById(userId).exec();
   }
 
+  async getProfile(userId: string) {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new NotFoundException('User not found');
+    return this.toSafeUser(user);
+  }
+
+  async updateProfile(userId: string, data: { name?: string; phoneNumber?: string }) {
+    const updateData: any = {};
+    if (data.name) updateData.name = data.name.trim();
+    if (data.phoneNumber) updateData.phoneNumber = data.phoneNumber.trim();
+
+    const user = await this.userModel.findByIdAndUpdate(userId, updateData, { new: true }).exec();
+    if (!user) throw new NotFoundException('User not found');
+    return this.toSafeUser(user);
+  }
+
   private createAuthResponse(user: UserDocument) {
     const token = this.jwtService.sign({
       sub: user.id,
@@ -79,7 +98,9 @@ export class AuthService {
       id: user.id,
       name: user.name,
       email: user.email,
+      phoneNumber: user.phoneNumber,
       balance: user.balance,
+      hasPinSet: !!user.walletPinHash,
     };
   }
 }

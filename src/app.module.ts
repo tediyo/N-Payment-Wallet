@@ -8,6 +8,9 @@ import { AuthModule } from './auth/auth.module';
 import { NotesModule } from './notes/notes.module';
 import { PaymentModule } from './payment/payment.module';
 import { WalletModule } from './wallet/wallet.module';
+import { SecurityModule } from './security/security.module';
+import { NotificationModule } from './notifications/notification.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -30,4 +33,4 @@ import { WalletModule } from './wallet/wallet.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

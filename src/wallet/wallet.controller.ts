@@ -5,12 +5,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PayBillDto } from './dto/pay-bill.dto';
 import { RechargeDto } from './dto/recharge.dto';
 import { TransferDto } from './dto/transfer.dto';
+import { ScanQrDto } from './dto/scan-qr.dto';
 import { WalletService } from './wallet.service';
 
 @Controller('wallet')
 @UseGuards(JwtAuthGuard)
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(private readonly walletService: WalletService) { }
 
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
@@ -35,5 +36,25 @@ export class WalletController {
   @Get('transactions')
   transactions(@CurrentUser() user: AuthUser) {
     return this.walletService.listTransactions(user.userId);
+  }
+
+  @Post('qr/generate')
+  generateQr(
+    @CurrentUser() user: AuthUser,
+    @Body('amount') amount: number,
+    @Body('note') note?: string,
+  ) {
+    return this.walletService.generateDynamicQr(user.userId, amount, note);
+  }
+
+  @Post('qr/scan')
+  async scanQr(@CurrentUser() user: AuthUser, @Body() dto: ScanQrDto) {
+    const qrData = await this.walletService.validateQr(dto.payload, dto.signature);
+    return this.walletService.transfer(user.userId, {
+      toUserId: qrData.userId,
+      amount: qrData.amount,
+      pin: dto.pin,
+      note: qrData.note,
+    });
   }
 }
